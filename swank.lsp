@@ -4,17 +4,10 @@
 
 ;; Author: KOBAYASHI Shigeru <shigeru.kb@gmail.com>
 ;; Created: 2009-09-12
-;; Version: 0.1
+;; Version: 0.1.2
 ;; License: MIT License
 ;; Keywords: newlisp, slime
 ;; URL: https://github.com/kosh04/swank-newlisp
-
-;;; ChangeLog:
-;;
-;; 2013-06-03   change license (GPL -> MIT)
-;; 2010-04-11   update for v.10.1.12 (s/name/term/)
-;;              add win32-peek
-;; 2009-09-12   first commit.
 
 ;; Permission is hereby granted, free of charge, to any person obtaining a copy
 ;; of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +27,18 @@
 ;; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 ;; THE SOFTWARE.
 
+;;; ChangeLog:
+;;
+;; 2013-09-18 / version 0.1.2
+;;  - fixes connection-info value
+;; 2013-06-03
+;;  - change license (GPL -> MIT)
+;; 2010-04-11 / version 0.1.1
+;;  - update for newLISP v.10.1.12 (s/name/term/)
+;;  - add win32-peek
+;; 2009-09-12 / version 0.1
+;;  - first commit.
+
 ;;; Commentary:
 ;;
 ;; This is tiny Swank server implementation written in newLISP [1].
@@ -48,11 +53,13 @@
 ;;
 ;; 2. Add something like this to your .emacs:
 ;;
+;; (require 'slime)
+;; (slime-setup '(slime-repl))  ; use REPL
+;; (setq slime-protocol-version 'ignore)
+;;
+;; (setq swank-newlisp-filename "swank.lsp")
 ;; (defun swank-newlisp-init (port-filename coding-system)
 ;;   (format "%S\n" `(swank:start-server ,port-filename)))
-
-;; (setq slime-protocol-version nil) ; ignore version query (if need)
-;; (defvar swank-newlisp-filename "./swank-newlisp.lsp") ; This file
 ;; (defun slime-newlisp ()
 ;;   (interactive)
 ;;   (let ((slime-lisp-implementations
@@ -65,6 +72,14 @@
 ;;
 ;; 4. If you want to kill swank process,
 ;;    use `M-x slime-repl-sayoonara' (or `slime-quit-lisp')
+
+;;; Known Bugs
+;;
+;; * Most created symbols are given MAIN prefix.
+;;   'hello -> MAIN:hello
+;; * Cannot handling binary string.
+;;   "\255" -> ERR
+;; * Cannot create context.
 
 ;;; Code:
 
@@ -400,19 +415,23 @@
 
 (defslimefun connection-info ()
   (letex ((_pid (getpid))
-          (_version (sys-info -2))
-          (_pv (or (slime-changelog-date) "2009-09-28")))
+          (_version (string (sys-info -2)))
+          (_pv (or (slime-changelog-date) "2009-09-28"))
+	  (_program (main-args 0)))
     '(":pid" _pid
-      ":style" nil
-      ":package" (":name" "MAIN"
-                  ":prompt" "")
+      ":style" ":spawn"
+      ":encoding" (":coding-systems"
+		   ("utf-8-unix" "iso-latin-1-unix"))
       ":lisp-implementation" (":type" "newLISP"
-                              ":name" "newlisp"
-                              ":version" _version)
+			      ":name" "newlisp"
+			      ":version" _version
+			      ":program" _program)
       ":machine" (":instance" "" ":type" "" ":version" "")
-      ":features" nil
-      ":version" _pv
-      )))
+      ":features" ()
+      ":modules" ()
+      ":package" (":name" "MAIN" ":prompt" "")
+      ":version" _pv)
+    ))
 
 (defslimefun create-repl (target)
   (set-context "MAIN"))
@@ -441,8 +460,6 @@
 (defvar *error-object* (sym "#:ERR"))
 (define (error? obj) (= obj *error-object*))
 
-;; FIXME: 'MAIN:foo をコンテキスト表記なしで表示したい
-;; 'MAIN:foo -> 'foo
 (define (eval-string-for-emacs str)
   (let ((value
          ;; DO EVAL
@@ -507,7 +524,7 @@ Return the context-name and the string to use in the prompt."
           'error-handler)
         (letex ((_id id))               ; error occurred at (EVAL FORM)
           (log-event "ABORT: %s\n" error-handler)
-          ;; (send-to-emacs '(":write-string" "; Evaluation aborted.\n" ":repl-result")) ; 重複っぽい 
+          ;; (send-to-emacs '(":write-string" "; Evaluation aborted.\n" ":repl-result")) ; multiple call?
           (send-to-emacs '(":return" (":abort") _id)))
         )))
 
