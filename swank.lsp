@@ -31,6 +31,7 @@
 ;;
 ;; 2013-09-18 / version 0.1.2
 ;;  - fixes connection-info value
+;;  - fixes switch context in REPL
 ;; 2013-06-03
 ;;  - change license (GPL -> MIT)
 ;; 2010-04-11 / version 0.1.1
@@ -57,13 +58,14 @@
 ;; (slime-setup '(slime-repl))  ; use REPL
 ;; (setq slime-protocol-version 'ignore)
 ;;
-;; (setq swank-newlisp-filename "swank.lsp")
 ;; (defun swank-newlisp-init (port-filename coding-system)
 ;;   (format "%S\n" `(swank:start-server ,port-filename)))
+;;
 ;; (defun slime-newlisp ()
 ;;   (interactive)
-;;   (let ((slime-lisp-implementations
-;;          `((newlisp ("newlisp" "-n" ,swank-newlisp-filename)
+;;   (let* ((swank-file (expand-file-name "swank.lsp"))
+;;          (slime-lisp-implementations
+;;          `((newlisp ("newlisp" "-n" ,swank-file)
 ;;                     :init swank-newlisp-init
 ;;                     :coding-system utf-8-unix))))
 ;;     (slime 'newlisp)))
@@ -73,13 +75,12 @@
 ;; 4. If you want to kill swank process,
 ;;    use `M-x slime-repl-sayoonara' (or `slime-quit-lisp')
 
-;;; Known Bugs
+;;; Known Bugs:
 ;;
 ;; * Most created symbols are given MAIN prefix.
 ;;   'hello -> MAIN:hello
-;; * Cannot handling binary string.
-;;   "\255" -> ERR
-;; * Cannot create context.
+;; * Cannot handling binary string ("\255")
+;; * Error when retval contains too long string ([text]~[/text])
 
 ;;; Code:
 
@@ -93,8 +94,9 @@
 (defglobal *stdout 1)
 (defglobal *stderr 2)
 
-(context 'swank)                        ; (in-package :swank)
 
+;; newLISP uses context instead of package
+(context 'swank)
 
 ;;;; Common Lisp like functions
 
@@ -202,8 +204,15 @@
     (if (context? x) x nil)))
 
 (define symbol-name term)
-(define context-name prefix)
-(define (symbol-context x) (find-context (context-name x)))
+(define symbol-context prefix)
+
+(define (context-name x)
+  (cond ((context? x) (string x))
+	((symbol? x) (prefix x))
+	(true (string x))))
+
+;(define (symbol-context x)
+;  (find-context (context-name x)))
 
 ;; (define even? (lambda (n) (= (& n 0x01) 0)))
 
@@ -462,8 +471,8 @@
 
 (define (eval-string-for-emacs str)
   (let ((value
-         ;; DO EVAL
-         (eval-string str *buffer-context* *error-object*)))
+	 ;; DO EVAL
+	 (eval-string str *buffer-context* *error-object*)))
     (prog1
         (cond
           ((error? value)
@@ -473,7 +482,11 @@
            (error-text (eval-error)))
           ("else"
            (to-string value)))
-      (set-context-maybe str))))
+
+      (when (and (starts-with str "(context ")
+		 (context? value))
+	(set-context value)
+	(emacs-new-package value)))))
 
 (define (set-context cname)
   "Set context named str-context.
@@ -484,12 +497,6 @@ Return the context-name and the string to use in the prompt."
                    *buffer-context*))))
     (setf *buffer-context* ctx)
     (list (term ctx) (context-string-for-prompt ctx))))
-
-(define (set-context-maybe str)
-  (when (regex "\\(context '?(\\w+)\\)" str)
-    (let (cname (find-context (last (read-expr $0))))
-      (set-context cname)
-      (emacs-new-package cname))))
 
 (define (context-string-for-prompt ctx)
   (or (context? ctx)
