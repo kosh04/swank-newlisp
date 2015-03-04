@@ -730,4 +730,7 @@ Return the context-name and the string to use in the prompt."
 
 (context MAIN)
 
+;; FIXME: Whats defslimefun package
+(new swank 'swank-repl)
+
 ;;; swank-newlisp.lsp ends here.
